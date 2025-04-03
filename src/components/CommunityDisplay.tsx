@@ -1,10 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
-import { Post } from "./PostList";
 import { supabase } from "../supabase-client";
 import { PostItem } from "./PostItem";
+import { Post } from "./PostList";
 
 interface Props {
   communityId: number;
+}
+
+interface Community {
+  id: number;
+  name: string;
+  description: string;
 }
 
 interface PostWithCommunity extends Post {
@@ -13,42 +19,61 @@ interface PostWithCommunity extends Post {
   };
 }
 
-export const fetchCommunityPost = async (
-  communityId: number
+// 1. Separate fetch functions
+const fetchCommunity = async (id: number): Promise<Community | null> => {
+  const { data, error } = await supabase
+    .from("communities")
+    .select("*")
+    .eq("id", id)
+    .single();
+  if (error) {
+    console.error("Community fetch error:", error);
+    return null;
+  }
+  console.log("DATA: ", data);
+  return data;
+};
+
+const fetchCommunityPosts = async (
+  id: number
 ): Promise<PostWithCommunity[]> => {
   const { data, error } = await supabase
     .from("posts")
     .select("*, communities(name)")
-    .eq("community_id", communityId)
-    .order("created_at", { ascending: false });
-
-  if (error) throw new Error(error.message);
-  return data as PostWithCommunity[];
+    .eq("community_id", id);
+  console.log("Joined DATA: ", data);
+  if (error) throw error;
+  return data || [];
 };
 
 export const CommunityDisplay = ({ communityId }: Props) => {
-  const { data, error, isLoading } = useQuery<PostWithCommunity[], Error>({
-    queryKey: ["communityPost", communityId],
-    queryFn: () => fetchCommunityPost(communityId),
+  // 2. Parallel fetch using Promise.all
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["communityData", communityId],
+    queryFn: () =>
+      Promise.all([
+        fetchCommunity(communityId),
+        fetchCommunityPosts(communityId),
+      ]),
+    // Optional: Set stale time to prevent unnecessary refetches
+    staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
-  if (isLoading)
-    return <div className="text-center py-4">Loading communities...</div>;
-  if (error)
-    return (
-      <div className="text-center text-red-500 py-4">
-        Error: {error.message}
-      </div>
-    );
+  // 3. Destructure the parallel results
+  const [community, posts] = data || [null, []];
+
+  if (isLoading) return <div>Loading...</div>;
+  if (error) return <div>Error loading data</div>;
+
   return (
     <div>
       <h2 className="text-6xl font-bold mb-6 text-center bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
-        {data && data[0].communities.name} Community Posts
+        {community?.name || `Community ${communityId}`} Posts
       </h2>
 
-      {data && data.length > 0 ? (
+      {posts.length > 0 ? (
         <div className="flex flex-wrap gap-6 justify-center">
-          {data.map((post) => (
+          {posts.map((post) => (
             <PostItem key={post.id} post={post} />
           ))}
         </div>
